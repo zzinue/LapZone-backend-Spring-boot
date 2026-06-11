@@ -8,6 +8,11 @@ import com.lapzone.api.product.Product;
 import com.lapzone.api.product.ProductRepository;
 import com.lapzone.api.user.AppUser;
 import com.lapzone.api.user.AppUserRepository;
+import com.stripe.Stripe;
+import com.stripe.exception.StripeException;
+import com.stripe.model.checkout.Session;
+import com.stripe.param.checkout.SessionCreateParams;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
@@ -15,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.List;
 import java.util.UUID;
 
@@ -28,6 +34,8 @@ public class OrderService {
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
     private final PaymentRepository paymentRepository;
+    private final String stripeSecretKey;
+    private final String frontendUrl;
 
     public OrderService(
             AppUserRepository appUserRepository,
@@ -36,7 +44,9 @@ public class OrderService {
             ProductRepository productRepository,
             OrderRepository orderRepository,
             OrderItemRepository orderItemRepository,
-            PaymentRepository paymentRepository
+            PaymentRepository paymentRepository,
+            @Value("${app.stripe.secret-key}") String stripeSecretKey,
+            @Value("${app.frontend-url}") String frontendUrl
     ) {
         this.appUserRepository = appUserRepository;
         this.cartRepository = cartRepository;
@@ -45,6 +55,8 @@ public class OrderService {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.paymentRepository = paymentRepository;
+        this.stripeSecretKey = stripeSecretKey;
+        this.frontendUrl = frontendUrl;
     }
 
     @Transactional
@@ -119,7 +131,73 @@ public class OrderService {
 
         List<OrderItem> orderItems = orderItemRepository.findByOrder(savedOrder);
 
-        return OrderResponse.of(savedOrder, savedPayment, orderItems);
+        OrderResponse response = OrderResponse.of(savedOrder, savedPayment, orderItems);
+
+        if ("STRIPE".equals(request.paymentMethod())) {
+            Session stripeSession = createStripeCheckoutSession(savedOrder, savedPayment, orderItems);
+            savedPayment.setPaymentReference(stripeSession.getId());
+            paymentRepository.save(savedPayment);
+
+            return response.withStripeCheckoutUrl(stripeSession.getUrl());
+        }
+
+        return response;
+    }
+
+    @Transactional
+    public OrderResponse confirmStripePayment(Authentication authentication, String sessionId) {
+        AppUser user = getAuthenticatedUser(authentication);
+
+        if (sessionId == null || sessionId.isBlank()) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Stripe session id is required"
+            );
+        }
+
+        configureStripe();
+
+        Session session;
+
+        try {
+            session = Session.retrieve(sessionId);
+        } catch (StripeException exception) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Stripe payment session could not be verified",
+                    exception
+            );
+        }
+
+        Payment payment = paymentRepository.findByPaymentReference(sessionId)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Payment was not found"
+                ));
+
+        Order order = payment.getOrder();
+
+        if (!order.getUser().getId().equals(user.getId())) {
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    "You cannot confirm this payment"
+            );
+        }
+
+        if ("paid".equals(session.getPaymentStatus())) {
+            payment.setPaymentStatus("APROBADO");
+            order.setStatus("PAGADO");
+        } else {
+            payment.setPaymentStatus("PENDIENTE");
+            order.setStatus("PENDIENTE");
+        }
+
+        paymentRepository.save(payment);
+        orderRepository.save(order);
+
+        List<OrderItem> items = orderItemRepository.findByOrder(order);
+
+        return OrderResponse.of(order, payment, items);
     }
 
     public List<OrderResponse> getMyOrders(Authentication authentication) {
@@ -181,5 +259,67 @@ public class OrderService {
                         HttpStatus.UNAUTHORIZED,
                         "Authenticated user was not found"
                 ));
+    }
+
+    private Session createStripeCheckoutSession(
+            Order order,
+            Payment payment,
+            List<OrderItem> orderItems
+    ) {
+        configureStripe();
+
+        SessionCreateParams.Builder params = SessionCreateParams.builder()
+                .setMode(SessionCreateParams.Mode.PAYMENT)
+                .setSuccessUrl(frontendUrl + "/stripe/success?session_id={CHECKOUT_SESSION_ID}")
+                .setCancelUrl(frontendUrl + "/checkout")
+                .putMetadata("orderId", order.getId().toString())
+                .putMetadata("paymentId", payment.getId().toString());
+
+        for (OrderItem item : orderItems) {
+            params.addLineItem(
+                    SessionCreateParams.LineItem.builder()
+                            .setQuantity(item.getQuantity().longValue())
+                            .setPriceData(
+                                    SessionCreateParams.LineItem.PriceData.builder()
+                                            .setCurrency("mxn")
+                                            .setUnitAmount(toStripeAmount(item.getUnitPrice()))
+                                            .setProductData(
+                                                    SessionCreateParams.LineItem.PriceData.ProductData.builder()
+                                                            .setName(item.getProduct().getName())
+                                                            .build()
+                                            )
+                                            .build()
+                            )
+                            .build()
+            );
+        }
+
+        try {
+            return Session.create(params.build());
+        } catch (StripeException exception) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Stripe checkout session could not be created",
+                    exception
+            );
+        }
+    }
+
+    private void configureStripe() {
+        if (stripeSecretKey == null || stripeSecretKey.isBlank()) {
+            throw new ResponseStatusException(
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "Stripe secret key is not configured"
+            );
+        }
+
+        Stripe.apiKey = stripeSecretKey;
+    }
+
+    private long toStripeAmount(BigDecimal amount) {
+        return amount
+                .multiply(BigDecimal.valueOf(100))
+                .setScale(0, RoundingMode.HALF_UP)
+                .longValueExact();
     }
 }

@@ -11,6 +11,8 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> {
 
     Optional<Payment> findByOrder(Order order);
 
+    Optional<Payment> findByPaymentReference(String paymentReference);
+
     long countByPaymentStatus(String paymentStatus);
 
     @Query("SELECT COALESCE(SUM(p.amount), 0) FROM Payment p WHERE p.paymentStatus = 'APROBADO'")

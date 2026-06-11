@@ -22,7 +22,12 @@ spring:
 
 server:
   port: 8080
+  error:
+    include-message: always
 app:
   jwt:
     secret: "lapzone-super-secret-key-para-firmar-tokens-jwt-cambiar-despues"
     expiration-ms: 86400000
+  frontend-url: ${APP_FRONTEND_URL:http://localhost:5173}
+  stripe:
+    secret-key: ${STRIPE_SECRET_KEY:}

@@ -26,6 +26,14 @@ public class OrderController {
         return orderService.checkout(authentication, request);
     }
 
+    @PostMapping("/stripe/confirm")
+    public OrderResponse confirmStripePayment(
+            Authentication authentication,
+            @RequestParam("session_id") String sessionId
+    ) {
+        return orderService.confirmStripePayment(authentication, sessionId);
+    }
+
     @GetMapping("/my-orders")
     public List<OrderResponse> getMyOrders(Authentication authentication) {
         return orderService.getMyOrders(authentication);

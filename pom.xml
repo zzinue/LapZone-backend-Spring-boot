@@ -93,6 +93,13 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Stripe Checkout -->
+        <dependency>
+            <groupId>com.stripe</groupId>
+            <artifactId>stripe-java</artifactId>
+            <version>31.3.0</version>
+        </dependency>
+
     </dependencies>
 
     <build>

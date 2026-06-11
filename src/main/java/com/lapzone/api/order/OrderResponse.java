@@ -11,6 +11,7 @@ public record OrderResponse(
         BigDecimal total,
         String paymentMethod,
         String paymentStatus,
+        String stripeCheckoutUrl,
         LocalDateTime createdAt,
         List<OrderItemResponse> items
 ) {
@@ -30,8 +31,22 @@ public record OrderResponse(
                 order.getTotal(),
                 payment.getPaymentMethod(),
                 payment.getPaymentStatus(),
+                null,
                 order.getCreatedAt(),
                 itemResponses
+        );
+    }
+
+    public OrderResponse withStripeCheckoutUrl(String stripeCheckoutUrl) {
+        return new OrderResponse(
+                orderId,
+                status,
+                total,
+                paymentMethod,
+                paymentStatus,
+                stripeCheckoutUrl,
+                createdAt,
+                items
         );
     }
 }

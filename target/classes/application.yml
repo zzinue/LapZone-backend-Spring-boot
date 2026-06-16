@@ -3,9 +3,9 @@ spring:
     name: lapzone-api
 
   datasource:
-    url: jdbc:postgresql://${PGHOST:localhost}:${PGPORT:5432}/${PGDATABASE:lapzone_db}
-    username: ${PGUSER:postgres}
-    password: ${PGPASSWORD:1111}
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/lapzone_db}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:1111}
     driver-class-name: org.postgresql.Driver
 
   jpa:
